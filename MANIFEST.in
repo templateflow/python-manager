@@ -1,0 +1,2 @@
+include versioneer.py
+include templateflow-manager/_version.py
