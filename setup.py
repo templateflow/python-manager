@@ -1,24 +1,15 @@
 #!/usr/bin/env python
-""" templateflow setup script """
+"""Setup TemplateFlow Manager."""
 import sys
 from setuptools import setup
-import versioneer
-from setuptools.command.install import install
-from setuptools.command.develop import develop
 
-# Give setuptools a hint to complain if it's too old a version
-# 30.3.0 allows us to put most metadata in setup.cfg
-# Should match pyproject.toml
-SETUP_REQUIRES = ['setuptools >= 30.3.0']
-# This enables setuptools to install wheel on-the-fly
-SETUP_REQUIRES += ['wheel'] if 'bdist_wheel' in sys.argv else []
-
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     """ Install entry-point """
-    setup(
-        name='tfmanager',
-        version=versioneer.get_version(),
-        setup_requires=SETUP_REQUIRES,
-        cmdclass=versioneer.get_cmdclass(),
-    )
+    extra_args = {}
+    if "bdist_wheel" in sys.argv:
+        extra_args["setup_requires"] = [
+            "setuptools >= 42.0",
+            "wheel",
+            "setuptools_scm[toml] >= 3.4",
+        ]
+    setup(**extra_args)
