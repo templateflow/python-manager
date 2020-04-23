@@ -1,0 +1,66 @@
+# This workflow will install Python dependencies, run tests and lint with a single version of Python
+# For more information see: https://help.github.com/actions/language-and-framework-guides/using-python-with-github-actions
+name: Python package
+
+on:
+  push:
+    branches: [ master ]
+    tags: [ '*' ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.6, 3.7, 3.8]
+
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        ssh-key: "${{ secrets.NIPREPS_BOT }}"
+    - name: Fetch all tags (for setuptools_scm to work)
+      if: github.ref == 'refs/heads/master'
+      run: |
+        /usr/bin/git -c protocol.version=2 fetch --tags --prune --unshallow origin
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v1
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Build in confined environment and interpolate version
+      run: |
+        python -m venv /tmp/buildenv
+        source /tmp/buildenv/bin/activate
+        python -m pip install "setuptools ~= 42.0" wheel "setuptools_scm[toml] >= 3.4" \
+                              setuptools_scm_git_archive "pip>=10.0.1" twine docutils
+        python setup.py sdist bdist_wheel
+        python -m twine check dist/tfmanager*
+        # Interpolate version
+        if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+          TAG=${GITHUB_REF##*/}
+        fi
+        THISVERSION=$( python setup.py --version )
+        THISVERSION=${TAG:-$THISVERSION}
+        echo "Expected VERSION: \"${THISVERSION}\""
+        echo ::set-env name=THISVERSION::"${THISVERSION}"
+    - name: Install in confined environment [sdist]
+      run: |
+        python -m venv /tmp/install_sdist
+        source /tmp/install_sdist/bin/activate
+        python -m pip install "setuptools ~= 42.0" "pip>=10.0.1"
+        python -m pip install dist/tfmanager*.tar.gz
+        INSTALLED_VERSION=$(python -c 'import tfmanager as tf; print(tf.__version__, end="")')
+        echo "VERSION: \"${THISVERSION}\""
+        echo "INSTALLED: \"${INSTALLED_VERSION}\""
+        test "${INSTALLED_VERSION}" = "${THISVERSION}"
+    - name: Install in confined environment [wheel]
+      run: |
+        python -m venv /tmp/install_wheel
+        source /tmp/install_wheel/bin/activate
+        python -m pip install "setuptools ~= 42.0" "pip>=10.0.1"
+        python -m pip install dist/tfmanager*.whl
+        INSTALLED_VERSION=$(python -c 'import tfmanager as tf; print(tf.__version__, end="")')
+        echo "INSTALLED: \"${INSTALLED_VERSION}\""
+        test "${INSTALLED_VERSION}" = "${THISVERSION}"
