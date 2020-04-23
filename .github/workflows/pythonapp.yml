@@ -51,7 +51,7 @@ jobs:
         source /tmp/install_sdist/bin/activate
         python -m pip install "setuptools ~= 42.0" "pip>=10.0.1"
         python -m pip install dist/tfmanager*.tar.gz
-        INSTALLED_VERSION=$( /tmp/install_sdist/bin/tfmgr --version )
+        INSTALLED_VERSION=$( tfmgr --version )
         INSTALLED_VERSION=${INSTALLED_VERSION##* }
         echo "VERSION: \"${THISVERSION}\""
         echo "INSTALLED: \"${INSTALLED_VERSION}\""
@@ -60,9 +60,10 @@ jobs:
       run: |
         python -m venv /tmp/install_wheel
         source /tmp/install_wheel/bin/activate
-        python -m pip install "setuptools ~= 42.0" "pip>=10.0.1"
+        # CRUCIAL: pip does not install console scripts from wheels before 20.1b1
+        python -m pip install "setuptools ~= 42.0" "pip>=20.1b1"
         python -m pip install dist/tfmanager*.whl
-        INSTALLED_VERSION=$( /tmp/install_wheel/bin/tfmgr --version )
+        INSTALLED_VERSION=$( tfmgr --version )
         INSTALLED_VERSION=${INSTALLED_VERSION##* }
         echo "INSTALLED: \"${INSTALLED_VERSION}\""
         test "${INSTALLED_VERSION}" = "${THISVERSION}"
