@@ -182,4 +182,4 @@ pseudoxml:
 	@echo "Build finished. The pseudo-XML files are in $(BUILDDIR)/pseudoxml."
 
 versioned:
-	PYTHONPATH=$(PYTHONPATH) sphinx-versioning -vv -l ./docs/conf.py build -r $(CURBRANCH) ./docs/ docs/$(BUILDDIR)/html/
+	PYTHONPATH=$(PYTHONPATH) sphinx-versioning -vv -l conf.py build -r $(CURBRANCH) . $(BUILDDIR)/html/
