@@ -19,7 +19,9 @@ def _glob_all(path):
             yield p
 
 
-def run_command(cmd: str, env: dict = None, cwd: str = None, capture_output: bool = True) -> str:
+def run_command(
+    cmd: str, env: dict = None, cwd: str = None, capture_output: bool = True
+) -> str:
     """
     Run prepared behave command in shell and return its output.
 
@@ -28,17 +30,12 @@ def run_command(cmd: str, env: dict = None, cwd: str = None, capture_output: boo
     """
     import os
     from subprocess import run
+
     if env:
         _env = dict(os.environ)
         _env.update(env)
         env = _env
-    proc = run(
-        cmd,
-        capture_output=capture_output,
-        shell=True,
-        env=env,
-        cwd=cwd,
-    )
+    proc = run(cmd, capture_output=capture_output, shell=True, env=env, cwd=cwd,)
     return proc
 
 
@@ -59,25 +56,24 @@ def run_command_on_loop(
     with (yield from semaphore):
         runner = partial(run_command, cmd=command, env=env)
         proc = yield from loop.run_in_executor(None, runner)
-        filename = command.strip().split(' ')[-1]
+        filename = command.strip().split(" ")[-1]
         if proc.returncode == 0:
             message = f"Uploaded: {filename}"
         else:
             error = proc.stderr.decode()
             message = "ERROR:\n{error}"
             if "FileExistsError" in error:
-                message = (f"WARNING: Did not overwrite <{filename}>, "
-                           "please consider --osf-overwrite")
+                message = (
+                    f"WARNING: Did not overwrite <{filename}>, "
+                    "please consider --osf-overwrite"
+                )
         print(message)
         return proc.returncode
 
 
 @asyncio.coroutine
 def run_all_commands(
-    osf_cmd: str,
-    osf_env: dict = None,
-    path: Path = Path.cwd(),
-    max_runners: int = 1,
+    osf_cmd: str, osf_env: dict = None, path: Path = Path.cwd(), max_runners: int = 1,
 ) -> None:
     """
     Run all commands in a list.
@@ -89,11 +85,9 @@ def run_all_commands(
     loop = asyncio.get_event_loop()
     fs = [
         run_command_on_loop(
-            loop,
-            semaphore,
-            f"{osf_cmd} {f} {f.relative_to(path.parent)}",
-            osf_env,
-        ) for f in _glob_all(path)
+            loop, semaphore, f"{osf_cmd} {f} {f.relative_to(path.parent)}", osf_env,
+        )
+        for f in _glob_all(path)
     ]
     for f in asyncio.as_completed(fs):
         yield from f
@@ -146,10 +140,18 @@ def cli():
     confirmation_prompt=False,
 )
 @click.option("--path", type=click.Path(exists=True))
-@click.option("-j", "--nprocs", type=click.IntRange(min=1),
-              default=cpu_count())
-def add(template_id, osf_project, osf_user, osf_password, osf_overwrite,
-        gh_user, gh_password, path, nprocs):
+@click.option("-j", "--nprocs", type=click.IntRange(min=1), default=cpu_count())
+def add(
+    template_id,
+    osf_project,
+    osf_user,
+    osf_password,
+    osf_overwrite,
+    gh_user,
+    gh_password,
+    path,
+    nprocs,
+):
     """Add a new template."""
     path = Path(path or f"tpl-{template_id}")
 
@@ -172,9 +174,14 @@ def add(template_id, osf_project, osf_user, osf_password, osf_overwrite,
         "OSF_PASSWORD": osf_password,
     }
     loop = asyncio.get_event_loop()
-    loop.run_until_complete(run_all_commands(
-        osf_cmd=f"osf upload{' -f' * osf_overwrite}", path=path,
-        osf_env=osf_env, max_runners=nprocs))
+    loop.run_until_complete(
+        run_all_commands(
+            osf_cmd=f"osf upload{' -f' * osf_overwrite}",
+            path=path,
+            osf_env=osf_env,
+            max_runners=nprocs,
+        )
+    )
 
     with TemporaryDirectory() as tmpdir:
         repodir = Path(tmpdir) / "templateflow"
@@ -190,13 +197,13 @@ def add(template_id, osf_project, osf_user, osf_password, osf_overwrite,
                 "hub clone templateflow/templateflow",
                 cwd=tmpdir,
                 capture_output=False,
-                env={"GITHUB_USER": gh_user, "GITHUB_PASSWORD": gh_password}
+                env={"GITHUB_USER": gh_user, "GITHUB_PASSWORD": gh_password},
             )
             run_command(
                 "hub fork --remote-name origin",
                 cwd=str(repodir),
                 capture_output=False,
-                env={"GITHUB_USER": gh_user, "GITHUB_PASSWORD": gh_password}
+                env={"GITHUB_USER": gh_user, "GITHUB_PASSWORD": gh_password},
             )
 
         run_command(
@@ -205,22 +212,18 @@ def add(template_id, osf_project, osf_user, osf_password, osf_overwrite,
             capture_output=False,
         )
         run_command(
-            "git fetch upstream tpl-intake",
-            cwd=str(repodir),
-            capture_output=False,
+            "git fetch upstream tpl-intake", cwd=str(repodir), capture_output=False,
         )
         run_command(
             f"git checkout -b pr-tpl-{template_id.lower()} upstream/tpl-intake",
             cwd=str(repodir),
             capture_output=False,
         )
-        (repodir / f"{path.name}.toml").write_text(toml.dumps({
-            "osf": {"project": osf_project},
-        }))
+        (repodir / f"{path.name}.toml").write_text(
+            toml.dumps({"osf": {"project": osf_project},})
+        )
         run_command(
-            f"git add {path.name}.toml",
-            cwd=str(repodir),
-            capture_output=False,
+            f"git add {path.name}.toml", cwd=str(repodir), capture_output=False,
         )
         run_command(
             f"git commit -m 'add(tpl-{template_id}): create intake file'",
@@ -234,7 +237,8 @@ def add(template_id, osf_project, osf_user, osf_password, osf_overwrite,
             env={"GITHUB_USER": gh_user, "GITHUB_PASSWORD": gh_password},
         )
 
-        (repodir.parent / 'message.md').write_text(f"""\
+        (repodir.parent / "message.md").write_text(
+            f"""\
 ADD: ``tpl-{template_id}``
 
 ## {metadata.get('Name', '<missing Name>')}
@@ -255,7 +259,8 @@ Storage: https://osf.io/{osf_project}/files/
 ### References and links
 {', '.join(metadata.get('ReferencesAndLinks', [])) or 'N/A'}
 
-""")
+"""
+        )
         run_command(
             "hub pull-request -b templateflow:tpl-intake "
             f"-h {gh_user}:pr-tpl-{template_id.lower()} "
