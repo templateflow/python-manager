@@ -243,7 +243,7 @@ def add(
             "git fetch upstream tpl-intake", cwd=str(repodir), capture_output=False,
         )
         run_command(
-            f"git checkout -b pr-tpl-{template_id.lower()} upstream/tpl-intake",
+            f"git checkout -b pr/{osf_project}/tpl-{template_id} upstream/tpl-intake",
             cwd=str(repodir),
             capture_output=False,
         )
@@ -259,7 +259,7 @@ def add(
             capture_output=False,
         )
         run_command(
-            f"git push -u origin pr-tpl-{template_id.lower()}",
+            f"git push -u origin pr/{osf_project}/tpl-{template_id}",
             cwd=str(repodir),
             capture_output=False,
             env={"GITHUB_USER": gh_user, "GITHUB_PASSWORD": gh_password},
@@ -291,7 +291,7 @@ Storage: https://osf.io/{osf_project}/files/
         )
         run_command(
             "hub pull-request -b templateflow:tpl-intake "
-            f"-h {gh_user}:pr-tpl-{template_id.lower()} "
+            f"-h {gh_user}:pr/{osf_project}/tpl-{template_id} "
             f"-F {repodir.parent / 'message.md'}",
             cwd=str(repodir),
             capture_output=False,
