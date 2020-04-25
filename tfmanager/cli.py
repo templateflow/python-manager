@@ -306,7 +306,7 @@ Storage: https://osf.io/{osf_project}/files/
 @click.option("--path", type=click.Path(exists=False))
 @click.option("-j", "--nprocs", type=click.IntRange(min=1), default=cpu_count())
 def get(
-    template_id, osf_project, osf_user, osf_password, overwrite, path, nprocs,
+    template_id, osf_project, overwrite, path, nprocs,
 ):
     """Add a new template."""
     path = Path(path or f"tpl-{template_id}")
