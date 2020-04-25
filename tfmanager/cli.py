@@ -302,13 +302,6 @@ Storage: https://osf.io/{osf_project}/files/
 @cli.command()
 @click.argument("template_id", callback=validate_name)
 @click.option("--osf-project", envvar="OSF_PROJECT", callback=is_set)
-@click.option("--osf-user", envvar="OSF_USERNAME", callback=is_set)
-@click.password_option(
-    "--osf-password",
-    envvar="OSF_PASSWORD",
-    prompt="OSF password",
-    confirmation_prompt=False,
-)
 @click.option("--overwrite", is_flag=True)
 @click.option("--path", type=click.Path(exists=False))
 @click.option("-j", "--nprocs", type=click.IntRange(min=1), default=cpu_count())
@@ -327,8 +320,6 @@ def get(
     # click.echo("")
     osf_env = {
         "OSF_PROJECT": osf_project,
-        "OSF_USERNAME": osf_user,
-        "OSF_PASSWORD": osf_password,
     }
     remote_list = (
         run_command("osf list", env=osf_env, capture_output=True,)
