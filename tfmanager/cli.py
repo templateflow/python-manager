@@ -7,9 +7,10 @@ from functools import partial
 from tempfile import TemporaryDirectory
 import toml
 import json
+from typing import Sequence, Mapping, Union, Generator
 
 
-def _glob_all(path):
+def _glob_all(path: Union[Path, str]) -> Generator[Path, None, None]:
     for p in Path(path).iterdir():
         if p.name.startswith("."):
             continue
@@ -20,7 +21,10 @@ def _glob_all(path):
 
 
 def run_command(
-    cmd: str, env: dict = None, cwd: str = None, capture_output: bool = True
+    cmd: str,
+    env: Mapping[str, str] = None,
+    cwd: str = None,
+    capture_output: bool = True,
 ) -> str:
     """
     Run prepared behave command in shell and return its output.
@@ -44,7 +48,7 @@ def run_command_on_loop(
     loop: asyncio.AbstractEventLoop,
     semaphore: asyncio.Semaphore,
     command: str,
-    env: dict = None,
+    env: Mapping[str, str] = None,
 ) -> bool:
     """
     Run test for one particular feature, check its result and return report.
@@ -56,24 +60,28 @@ def run_command_on_loop(
     with (yield from semaphore):
         runner = partial(run_command, cmd=command, env=env)
         proc = yield from loop.run_in_executor(None, runner)
-        filename = command.strip().split(" ")[-1]
+        filename = proc.args.split(" ")[-1]
+        is_fetch = "fetch" in proc.args.split(" ")
         if proc.returncode == 0:
-            message = f"Uploaded: {filename}"
+            message = f"{['Uploaded', 'Fetched'][is_fetch]}: {filename}"
         else:
             error = proc.stderr.decode()
             message = "ERROR:\n{error}"
-            if "FileExistsError" in error:
+            if "FileExistsError" in error or "already exists" in error:
                 message = (
                     f"WARNING: Did not overwrite <{filename}>, "
-                    "please consider --osf-overwrite"
+                    f"please consider --{'osf-' * ~is_fetch}overwrite"
                 )
         print(message)
         return proc.returncode
 
 
 @asyncio.coroutine
-def run_all_commands(
-    osf_cmd: str, osf_env: dict = None, path: Path = Path.cwd(), max_runners: int = 1,
+def upload_all(
+    osf_cmd: str,
+    osf_env: Mapping[str, str] = None,
+    path: Path = Path.cwd(),
+    max_runners: int = 1,
 ) -> None:
     """
     Run all commands in a list.
@@ -89,6 +97,26 @@ def run_all_commands(
         )
         for f in _glob_all(path)
     ]
+    for f in asyncio.as_completed(fs):
+        yield from f
+
+
+@asyncio.coroutine
+def run_all(
+    cmd_list: Sequence[str],
+    env: Mapping[str, str] = None,
+    cwd: Path = Path.cwd(),
+    max_runners: int = 1,
+) -> None:
+    """
+    Run all commands in a list.
+
+    :param command_list: List of commands to run.
+    """
+    semaphore = asyncio.Semaphore(max_runners)
+
+    loop = asyncio.get_event_loop()
+    fs = [run_command_on_loop(loop, semaphore, cmd, env) for cmd in cmd_list]
     for f in asyncio.as_completed(fs):
         yield from f
 
@@ -175,7 +203,7 @@ def add(
     }
     loop = asyncio.get_event_loop()
     loop.run_until_complete(
-        run_all_commands(
+        upload_all(
             osf_cmd=f"osf upload{' -f' * osf_overwrite}",
             path=path,
             osf_env=osf_env,
@@ -269,6 +297,59 @@ Storage: https://osf.io/{osf_project}/files/
             capture_output=False,
             env={"GITHUB_USER": gh_user, "GITHUB_PASSWORD": gh_password},
         )
+
+
+@cli.command()
+@click.argument("template_id", callback=validate_name)
+@click.option("--osf-project", envvar="OSF_PROJECT", callback=is_set)
+@click.option("--osf-user", envvar="OSF_USERNAME", callback=is_set)
+@click.password_option(
+    "--osf-password",
+    envvar="OSF_PASSWORD",
+    prompt="OSF password",
+    confirmation_prompt=False,
+)
+@click.option("--overwrite", is_flag=True)
+@click.option("--path", type=click.Path(exists=False))
+@click.option("-j", "--nprocs", type=click.IntRange(min=1), default=cpu_count())
+def get(
+    template_id, osf_project, osf_user, osf_password, overwrite, path, nprocs,
+):
+    """Add a new template."""
+    path = Path(path or f"tpl-{template_id}")
+
+    if path.name != f"tpl-{template_id}":
+        path = path / f"tpl-{template_id}"
+
+    if path.exists():
+        click.echo(f"WARNING: <{path}> exists.")
+
+    # click.echo("")
+    osf_env = {
+        "OSF_PROJECT": osf_project,
+        "OSF_USERNAME": osf_user,
+        "OSF_PASSWORD": osf_password,
+    }
+    remote_list = (
+        run_command("osf list", env=osf_env, capture_output=True,)
+        .stdout.decode()
+        .splitlines()
+    )
+    osf_prefix = f"osfstorage/tpl-{template_id}/"
+    remote_list = [Path(fname) for fname in remote_list if fname.startswith(osf_prefix)]
+    dest_files = [(path / fname.relative_to(Path(osf_prefix))) for fname in remote_list]
+
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(
+        run_all(
+            cmd_list=[
+                f"osf fetch{' -f' * overwrite} {remote_file} {local_file}"
+                for remote_file, local_file in zip(remote_list, dest_files)
+            ],
+            env=osf_env,
+            max_runners=nprocs,
+        )
+    )
 
 
 if __name__ == "__main__":
