@@ -125,7 +125,7 @@ def validate_name(ctx, param, value):
     """Check whether this template already exists in the Archive."""
     from templateflow.api import templates
 
-    value = value.lstrip("tpl-")
+    value = value[4:] if value.startswith("tpl-") else value
     if value in templates():
         raise click.BadParameter(
             f"A template with name {value} already exists in the Archive."
@@ -140,6 +140,45 @@ def is_set(ctx, param, value):
             f"Please set it explicitly or define the corresponding environment variable."
         )
     return value
+
+
+def _upload(
+    template_id,
+    osf_project,
+    osf_user,
+    osf_password,
+    osf_overwrite,
+    path,
+    nprocs,
+):
+    """Upload template to OSF."""
+    path = Path(path or f"tpl-{template_id}")
+
+    if path.name != f"tpl-{template_id}":
+        path = path / f"tpl-{template_id}"
+
+    if not path.exists():
+        raise click.UsageError(f"<{path}> does not exist.")
+
+    descfile = path / "template_description.json"
+    if not descfile.exists():
+        raise FileNotFoundError(f"Missing template description <{descfile}>")
+
+    osf_env = {
+        "OSF_PROJECT": osf_project,
+        "OSF_USERNAME": osf_user,
+        "OSF_PASSWORD": osf_password,
+    }
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(
+        upload_all(
+            osf_cmd=f"osf upload{' -f' * osf_overwrite}",
+            path=path,
+            osf_env=osf_env,
+            max_runners=nprocs,
+        )
+    )
+    return json.loads(descfile.read_text())
 
 
 @click.group()
@@ -181,34 +220,14 @@ def add(
     nprocs,
 ):
     """Add a new template."""
-    path = Path(path or f"tpl-{template_id}")
-
-    if path.name != f"tpl-{template_id}":
-        path = path / f"tpl-{template_id}"
-
-    if not path.exists():
-        raise click.UsageError(f"<{path}> does not exist.")
-
-    descfile = path / "template_description.json"
-    if not descfile.exists():
-        raise FileNotFoundError(f"Missing template description <{descfile}>")
-
-    metadata = json.loads(descfile.read_text())
-
-    # click.echo("")
-    osf_env = {
-        "OSF_PROJECT": osf_project,
-        "OSF_USERNAME": osf_user,
-        "OSF_PASSWORD": osf_password,
-    }
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(
-        upload_all(
-            osf_cmd=f"osf upload{' -f' * osf_overwrite}",
-            path=path,
-            osf_env=osf_env,
-            max_runners=nprocs,
-        )
+    metadata = _upload(
+        template_id,
+        osf_project,
+        osf_user,
+        osf_password,
+        osf_overwrite,
+        path,
+        nprocs,
     )
 
     with TemporaryDirectory() as tmpdir:
@@ -300,7 +319,41 @@ Storage: https://osf.io/{osf_project}/files/
 
 
 @cli.command()
-@click.argument("template_id", callback=validate_name)
+@click.argument("template_id")
+@click.option("--osf-project", envvar="OSF_PROJECT", callback=is_set)
+@click.option("--osf-user", envvar="OSF_USERNAME", callback=is_set)
+@click.password_option(
+    "--osf-password",
+    envvar="OSF_PASSWORD",
+    prompt="OSF password",
+    confirmation_prompt=False,
+)
+@click.option("--osf-overwrite", is_flag=True)
+@click.option("--path", type=click.Path(exists=True))
+@click.option("-j", "--nprocs", type=click.IntRange(min=1), default=cpu_count())
+def push(
+    template_id,
+    osf_project,
+    osf_user,
+    osf_password,
+    osf_overwrite,
+    path,
+    nprocs,
+):
+    """Push a new template, but do not create PR."""
+    _upload(
+        template_id,
+        osf_project,
+        osf_user,
+        osf_password,
+        osf_overwrite,
+        path,
+        nprocs,
+    )
+
+
+@cli.command()
+@click.argument("template_id")
 @click.option("--osf-project", envvar="OSF_PROJECT", callback=is_set)
 @click.option("--overwrite", is_flag=True)
 @click.option("--path", type=click.Path(exists=False))
@@ -341,6 +394,25 @@ def get(
             max_runners=nprocs,
         )
     )
+
+
+@cli.command()
+@click.argument("template_id")
+@click.option("--osf-project", envvar="OSF_PROJECT", default="ue5gx")
+@click.option("-o", "--out-csv", type=click.Path(exists=False))
+def geturls(template_id, osf_project, out_csv):
+    """Add a new template."""
+    from .osf import get_project_urls
+    if template_id.startswith("tpl-"):
+        template_id = template_id[4:]
+
+    urls = get_project_urls(f"""\
+https://files.osf.io/v1/resources/{osf_project}/providers/osfstorage/\
+""", f"tpl-{template_id}")
+    if out_csv:
+        Path(out_csv).write_text(urls)
+        return
+    print(urls)
 
 
 if __name__ == "__main__":
