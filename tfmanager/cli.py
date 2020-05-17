@@ -1,5 +1,5 @@
 """CLI."""
-from os import cpu_count
+from os import cpu_count, getcwd
 from pathlib import Path
 import asyncio
 import click
@@ -7,17 +7,8 @@ from functools import partial
 from tempfile import TemporaryDirectory
 import toml
 import json
-from typing import Sequence, Mapping, Union, Generator
-
-
-def _glob_all(path: Union[Path, str]) -> Generator[Path, None, None]:
-    for p in Path(path).iterdir():
-        if p.name.startswith("."):
-            continue
-        if p.is_dir():
-            yield from _glob_all(p)
-        else:
-            yield p
+from .utils import glob_all as _glob_all
+from typing import Sequence, Mapping
 
 
 def run_command(
@@ -143,13 +134,7 @@ def is_set(ctx, param, value):
 
 
 def _upload(
-    template_id,
-    osf_project,
-    osf_user,
-    osf_password,
-    osf_overwrite,
-    path,
-    nprocs,
+    template_id, osf_project, osf_user, osf_password, osf_overwrite, path, nprocs,
 ):
     """Upload template to OSF."""
     path = Path(path or f"tpl-{template_id}")
@@ -221,13 +206,7 @@ def add(
 ):
     """Add a new template."""
     metadata = _upload(
-        template_id,
-        osf_project,
-        osf_user,
-        osf_password,
-        osf_overwrite,
-        path,
-        nprocs,
+        template_id, osf_project, osf_user, osf_password, osf_overwrite, path, nprocs,
     )
 
     with TemporaryDirectory() as tmpdir:
@@ -332,23 +311,11 @@ Storage: https://osf.io/{osf_project}/files/
 @click.option("--path", type=click.Path(exists=True))
 @click.option("-j", "--nprocs", type=click.IntRange(min=1), default=cpu_count())
 def push(
-    template_id,
-    osf_project,
-    osf_user,
-    osf_password,
-    osf_overwrite,
-    path,
-    nprocs,
+    template_id, osf_project, osf_user, osf_password, osf_overwrite, path, nprocs,
 ):
     """Push a new template, but do not create PR."""
     _upload(
-        template_id,
-        osf_project,
-        osf_user,
-        osf_password,
-        osf_overwrite,
-        path,
-        nprocs,
+        template_id, osf_project, osf_user, osf_password, osf_overwrite, path, nprocs,
     )
 
 
@@ -403,16 +370,37 @@ def get(
 def geturls(template_id, osf_project, out_csv):
     """Add a new template."""
     from .osf import get_project_urls
+
     if template_id.startswith("tpl-"):
         template_id = template_id[4:]
 
-    urls = get_project_urls(f"""\
+    urls = get_project_urls(
+        f"""\
 https://files.osf.io/v1/resources/{osf_project}/providers/osfstorage/\
-""", f"tpl-{template_id}")
+""",
+        f"tpl-{template_id}",
+    )
     if out_csv:
         Path(out_csv).write_text(urls)
         return
     print(urls)
+
+
+@cli.command()
+@click.argument("template_dir", type=click.Path(exists=True), default=getcwd())
+@click.option("--normalize/--no-normalize", default=True)
+@click.option("--deoblique/--no-deoblique", default=False)
+def sanitize(template_dir, normalize, deoblique):
+    """Check orientation and datatypes of NIfTI files in template folder."""
+    from .utils import fix_nii as _fix_nii
+
+    updated = _fix_nii(template_dir, normalize, deoblique)
+    if updated:
+        print(
+            "\n  * ".join(
+                ["Modified:"] + [f"<{u.relative_to(template_dir)}>" for u in updated]
+            )
+        )
 
 
 if __name__ == "__main__":
