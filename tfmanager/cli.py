@@ -1,115 +1,9 @@
 """CLI."""
 from os import cpu_count, getcwd
 from pathlib import Path
-import asyncio
 import click
-from functools import partial
 from tempfile import TemporaryDirectory
 import toml
-import json
-from .utils import glob_all as _glob_all
-from typing import Sequence, Mapping
-
-
-def run_command(
-    cmd: str,
-    env: Mapping[str, str] = None,
-    cwd: str = None,
-    capture_output: bool = True,
-) -> str:
-    """
-    Run prepared behave command in shell and return its output.
-
-    :param cmd: Well-formed behave command to run.
-    :return: Command output as string.
-    """
-    import os
-    from subprocess import run
-
-    if env:
-        _env = dict(os.environ)
-        _env.update(env)
-        env = _env
-    proc = run(cmd, capture_output=capture_output, shell=True, env=env, cwd=cwd,)
-    return proc
-
-
-@asyncio.coroutine
-def run_command_on_loop(
-    loop: asyncio.AbstractEventLoop,
-    semaphore: asyncio.Semaphore,
-    command: str,
-    env: Mapping[str, str] = None,
-) -> bool:
-    """
-    Run test for one particular feature, check its result and return report.
-
-    :param loop: Loop to use.
-    :param command: Command to run.
-    :return: Result of the command.
-    """
-    with (yield from semaphore):
-        runner = partial(run_command, cmd=command, env=env)
-        proc = yield from loop.run_in_executor(None, runner)
-        filename = proc.args.split(" ")[-1]
-        is_fetch = "fetch" in proc.args.split(" ")
-        if proc.returncode == 0:
-            message = f"{['Uploaded', 'Fetched'][is_fetch]}: {filename}"
-        else:
-            error = proc.stderr.decode()
-            message = "ERROR:\n{error}"
-            if "FileExistsError" in error or "already exists" in error:
-                message = (
-                    f"WARNING: Did not overwrite <{filename}>, "
-                    f"please consider --{'osf-' * ~is_fetch}overwrite"
-                )
-        print(message)
-        return proc.returncode
-
-
-@asyncio.coroutine
-def upload_all(
-    osf_cmd: str,
-    osf_env: Mapping[str, str] = None,
-    path: Path = Path.cwd(),
-    max_runners: int = 1,
-) -> None:
-    """
-    Run all commands in a list.
-
-    :param command_list: List of commands to run.
-    """
-    semaphore = asyncio.Semaphore(max_runners)
-
-    loop = asyncio.get_event_loop()
-    fs = [
-        run_command_on_loop(
-            loop, semaphore, f"{osf_cmd} {f} {f.relative_to(path.parent)}", osf_env,
-        )
-        for f in _glob_all(path)
-    ]
-    for f in asyncio.as_completed(fs):
-        yield from f
-
-
-@asyncio.coroutine
-def run_all(
-    cmd_list: Sequence[str],
-    env: Mapping[str, str] = None,
-    cwd: Path = Path.cwd(),
-    max_runners: int = 1,
-) -> None:
-    """
-    Run all commands in a list.
-
-    :param command_list: List of commands to run.
-    """
-    semaphore = asyncio.Semaphore(max_runners)
-
-    loop = asyncio.get_event_loop()
-    fs = [run_command_on_loop(loop, semaphore, cmd, env) for cmd in cmd_list]
-    for f in asyncio.as_completed(fs):
-        yield from f
 
 
 def validate_name(ctx, param, value):
@@ -131,39 +25,6 @@ def is_set(ctx, param, value):
             f"Please set it explicitly or define the corresponding environment variable."
         )
     return value
-
-
-def _upload(
-    template_id, osf_project, osf_user, osf_password, osf_overwrite, path, nprocs,
-):
-    """Upload template to OSF."""
-    path = Path(path or f"tpl-{template_id}")
-
-    if path.name != f"tpl-{template_id}":
-        path = path / f"tpl-{template_id}"
-
-    if not path.exists():
-        raise click.UsageError(f"<{path}> does not exist.")
-
-    descfile = path / "template_description.json"
-    if not descfile.exists():
-        raise FileNotFoundError(f"Missing template description <{descfile}>")
-
-    osf_env = {
-        "OSF_PROJECT": osf_project,
-        "OSF_USERNAME": osf_user,
-        "OSF_PASSWORD": osf_password,
-    }
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(
-        upload_all(
-            osf_cmd=f"osf upload{' -f' * osf_overwrite}",
-            path=path,
-            osf_env=osf_env,
-            max_runners=nprocs,
-        )
-    )
-    return json.loads(descfile.read_text())
 
 
 @click.group()
@@ -205,6 +66,14 @@ def add(
     nprocs,
 ):
     """Add a new template."""
+    from .io import run_command
+    from .osf import upload as _upload
+
+    path = Path(path or f"tpl-{template_id}")
+
+    if not path.exists():
+        raise click.UsageError(f"<{path}> does not exist.")
+
     metadata = _upload(
         template_id, osf_project, osf_user, osf_password, osf_overwrite, path, nprocs,
     )
@@ -231,12 +100,13 @@ def add(
                 capture_output=False,
                 env={"GITHUB_USER": gh_user, "GITHUB_PASSWORD": gh_password},
             )
+        else:
+            run_command(
+                "git remote add upstream https://github.com/templateflow/templateflow.git",
+                cwd=str(repodir),
+                capture_output=False,
+            )
 
-        run_command(
-            "git remote add upstream https://github.com/templateflow/templateflow.git",
-            cwd=str(repodir),
-            capture_output=False,
-        )
         run_command(
             "git fetch upstream tpl-intake", cwd=str(repodir), capture_output=False,
         )
@@ -279,7 +149,7 @@ Storage: https://osf.io/{osf_project}/files/
 {metadata.get('License', metadata.get('Licence', '<missing License>'))}
 
 ### Cohorts
-{' '.join(('The dataset contains', len(metadata.get('cohort', []), 'cohorts.')))
+{' '.join(('The dataset contains', str(len(metadata.get('cohort', []))), 'cohorts.'))
  if metadata.get('cohort') else 'The dataset does not contain cohorts.'}
 
 ### References and links
@@ -314,6 +184,12 @@ def push(
     template_id, osf_project, osf_user, osf_password, osf_overwrite, path, nprocs,
 ):
     """Push a new template, but do not create PR."""
+    from .osf import upload as _upload
+    path = Path(path or f"tpl-{template_id}")
+
+    if not path.exists():
+        raise click.UsageError(f"<{path}> does not exist.")
+
     _upload(
         template_id, osf_project, osf_user, osf_password, osf_overwrite, path, nprocs,
     )
@@ -329,6 +205,10 @@ def get(
     template_id, osf_project, overwrite, path, nprocs,
 ):
     """Add a new template."""
+    from .osf import get_template as _get
+    if template_id.startswith("tpl-"):
+        template_id = template_id[4:]
+
     path = Path(path or f"tpl-{template_id}")
 
     if path.name != f"tpl-{template_id}":
@@ -337,30 +217,7 @@ def get(
     if path.exists():
         click.echo(f"WARNING: <{path}> exists.")
 
-    # click.echo("")
-    osf_env = {
-        "OSF_PROJECT": osf_project,
-    }
-    remote_list = (
-        run_command("osf list", env=osf_env, capture_output=True,)
-        .stdout.decode()
-        .splitlines()
-    )
-    osf_prefix = f"osfstorage/tpl-{template_id}/"
-    remote_list = [Path(fname) for fname in remote_list if fname.startswith(osf_prefix)]
-    dest_files = [(path / fname.relative_to(Path(osf_prefix))) for fname in remote_list]
-
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(
-        run_all(
-            cmd_list=[
-                f"osf fetch{' -f' * overwrite} {remote_file} {local_file}"
-                for remote_file, local_file in zip(remote_list, dest_files)
-            ],
-            env=osf_env,
-            max_runners=nprocs,
-        )
-    )
+    _get(template_id, osf_project, overwrite, path, nprocs)
 
 
 @cli.command()
