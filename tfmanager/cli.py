@@ -260,6 +260,20 @@ def sanitize(template_dir, normalize, deoblique):
         )
 
 
+@cli.command()
+@click.argument("template_id")
+@click.argument("field")
+@click.option("--path", type=click.Path(exists=True))
+def metadata(template_id, field, path):
+    """Get a metadata entry from a template."""
+    import json
+    if template_id.startswith("tpl-"):
+        template_id = template_id[4:]
+    path = Path(path or f"tpl-{template_id}")
+    metadata = json.loads((path / "template_description.json").read_text())
+    print(metadata.get(field))
+
+
 if __name__ == "__main__":
     """ Install entry-point """
     cli()
