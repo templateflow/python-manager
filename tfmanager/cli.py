@@ -168,7 +168,7 @@ Storage: https://osf.io/{osf_project}/files/
 
 
 @cli.command()
-@click.argument("template_id")
+@click.argument("template_id", callback=validate_name)
 @click.option("--osf-project", envvar="OSF_PROJECT", callback=is_set)
 @click.option("--osf-user", envvar="OSF_USERNAME", callback=is_set)
 @click.password_option(
