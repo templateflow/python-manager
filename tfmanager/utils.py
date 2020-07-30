@@ -68,8 +68,8 @@ def fix_nii(path=None, normalize=False, deoblique=True):
         qform, qcode = im.header.get_qform(coded=True)
 
         modified = modified or all(code == 4 for code in (scode, qcode))
-        modified = modified or np.allclose(sform, affine)
-        modified = modified or np.allclose(qform, affine)
+        modified = modified or sform is None or np.allclose(sform, affine)
+        modified = modified or qform is None or np.allclose(qform, affine)
 
         if modified:
             nii = nb.Nifti1Image(data.astype(dtype), affine, hdr)
