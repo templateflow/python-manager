@@ -1,5 +1,5 @@
 """CLI."""
-from os import cpu_count, getcwd, chdir
+from os import cpu_count, getcwd, chdir, getenv
 import datetime
 import json
 from pathlib import Path
@@ -47,12 +47,15 @@ def cli():
     confirmation_prompt=False,
 )
 @click.option("--osf-overwrite", is_flag=True)
-@click.option("--gh-user", envvar="GITHUB_USER", callback=is_set)
+@click.option(
+    "--gh-user",
+    envvar="GITHUB_USER",
+)
 @click.password_option(
-    "--gh-password",
-    envvar="GITHUB_PASSWORD",
-    prompt="GitHub password",
+    "--gh-token",
+    prompt="GitHub personal authentication token",
     confirmation_prompt=False,
+    envvar="GITHUB_TOKEN",
 )
 @click.option("--path", type=click.Path(exists=True))
 @click.option("-j", "--nprocs", type=click.IntRange(min=1), default=cpu_count())
@@ -62,7 +65,7 @@ def add(
     osf_password,
     osf_overwrite,
     gh_user,
-    gh_password,
+    gh_token,
     path,
     nprocs,
 ):
@@ -71,6 +74,10 @@ def add(
     from .utils import copy_template
     import shutil
     from datalad import api as dl
+
+    gh_password = getenv("GITHUB_PASSWORD")
+    if not gh_user or not gh_token:
+        raise click.BadParameter("Insufficient secrets to login into GitHub")
 
     path = Path(path or f"tpl-{template_id}").absolute()
     cwd = Path.cwd()
@@ -121,7 +128,7 @@ set a license (either CC0 or CC-BY) for you.""",
             metadata["RRID"] = rrid
 
     # Check short description
-    if not metadata.get("Name").strip():
+    if not metadata.get("Name", "").strip():
         short_desc = click.prompt(
             text="""\
 The "Name" metadata is not found within the <template_description.json> file. \
@@ -157,7 +164,7 @@ Please provide a list of authors separated by semicolon (;) in <Lastname Initial
     refs_prompt = [
         f"""\
 {'https://doi.org/' if not a.strip().startswith('http') else ''}\
-{a.replace("doi:").strip()}"""
+{a.replace("doi:", "").strip()}"""
         for a in metadata.get("ReferencesAndLinks", []) if a.strip()
     ]
     if not refs_prompt:
@@ -256,6 +263,7 @@ Populated contents after NIfTI sanitizing by the TF Manager.
             github_login=gh_user,
             publish_depends="osf-storage",
             existing="replace",
+            access_protocol="ssh"
         )
 
         # Save added contents
@@ -297,7 +305,7 @@ Populated contents after NIfTI sanitizing by the TF Manager.
             f"git push -u origin pr/tpl-{template_id}",
             cwd=str(repodir),
             capture_output=False,
-            env={"GITHUB_USER": gh_user, "GITHUB_PASSWORD": gh_password},
+            env={"GITHUB_USER": gh_user, "GITHUB_TOKEN": gh_token},
         )
 
         (repodir.parent / "message.md").write_text(
@@ -330,7 +338,7 @@ Datalad: https://github.com/{gh_user}/tpl-{template_id}
             f"-F {repodir.parent / 'message.md'}",
             cwd=str(repodir),
             capture_output=False,
-            env={"GITHUB_USER": gh_user, "GITHUB_PASSWORD": gh_password},
+            env={"GITHUB_USER": gh_user, "GITHUB_TOKEN": gh_token},
         )
 
 
