@@ -102,6 +102,27 @@ set a license (either CC0 or CC-BY) for you.""",
 
     metadata = json.loads((path / "template_description.json").read_text())
     rrid = metadata.get("RRID")
+    if not rrid:
+        rrid = click.prompt(
+            text="Has a RRID (research resource ID) already been assigned?",
+            type=str,
+            default=''
+        ) or None
+
+    if not metadata.get("Name").strip():
+        short_desc = click.prompt(
+            text="""\
+The "Name" metadata is not found within the <template_description.json> file. \
+Please provide a short description for this resource.""",
+            type=str,
+        )
+
+        if not short_desc:
+            raise click.UsageError(
+                "Cannot proceed without a short description."
+            )
+
+        metadata["Name"] = short_desc
 
     with TemporaryDirectory() as tmpdir:
         repodir = Path(tmpdir) / "templateflow"
