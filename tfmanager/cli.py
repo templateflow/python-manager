@@ -1,5 +1,6 @@
 """CLI."""
 from os import cpu_count, getcwd, chdir
+import datetime
 import json
 from pathlib import Path
 import click
@@ -77,7 +78,14 @@ def add(
     if not path.exists():
         raise click.UsageError(f"<{path}> does not exist.")
 
+    metadata = {}
+
     # Check metadata
+    if (path / "template_description.json").exists():
+        metadata = json.loads((path / "template_description.json").read_text())
+    metadata["Identifier"] = template_id
+
+    # Check license
     license_path = path / "LICENSE"
     if not license_path.exists():
         license_path = path / "LICENCE"
@@ -99,16 +107,20 @@ set a license (either CC0 or CC-BY) for you.""",
             )
 
         license_path = Path(pkgr_fn("tfmanager", f"data/{license_prompt}.LICENSE"))
+        metadata["License"] = license_prompt
 
-    metadata = json.loads((path / "template_description.json").read_text())
-    rrid = metadata.get("RRID")
-    if not rrid:
+    # Check RRID
+    if not metadata.get("RRID"):
         rrid = click.prompt(
             text="Has a RRID (research resource ID) already been assigned?",
             type=str,
             default=''
         ) or None
 
+        if rrid:
+            metadata["RRID"] = rrid
+
+    # Check short description
     if not metadata.get("Name").strip():
         short_desc = click.prompt(
             text="""\
@@ -123,6 +135,45 @@ Please provide a short description for this resource.""",
             )
 
         metadata["Name"] = short_desc
+
+    # Check authors
+    authors_prompt = [a.strip() for a in metadata.get("Authors", []) if a.strip()]
+    if not authors_prompt:
+        authors_prompt = [
+            n.strip() for n in click.prompt(
+                text="""\
+The "Authors" metadata is not found within the <template_description.json> file. \
+Please provide a list of authors separated by semicolon (;) in <Lastname Initial(s)> format.""",
+                type=str,
+            ).split(";")
+            if n
+        ]
+        if not authors_prompt:
+            click.confirm("No authors were given, do you want to continue?", abort=True)
+
+    metadata["Authors"] = authors_prompt
+
+    # Check references
+    refs_prompt = [
+        f"""\
+{'https://doi.org/' if not a.strip().startswith('http') else ''}\
+{a.replace("doi:").strip()}"""
+        for a in metadata.get("ReferencesAndLinks", []) if a.strip()
+    ]
+    if not refs_prompt:
+        refs_prompt = [
+            n.replace('"', "").strip() for n in click.prompt(
+                text="""\
+The "ReferencesAndLinks" metadata is not found within the <template_description.json> file. \
+Please provide a list of links and publications within double-quotes \
+(for example, "doi:10.1101/2021.02.10.430678") and separated by spaces (< >).""",
+                type=str,
+            ).split(" ")
+            if n
+        ]
+        if not refs_prompt:
+            click.confirm("No authors were given, do you want to continue?", abort=True)
+    metadata["ReferencesAndLinks"] = refs_prompt
 
     with TemporaryDirectory() as tmpdir:
         repodir = Path(tmpdir) / "templateflow"
@@ -171,10 +222,24 @@ Please provide a short description for this resource.""",
             dest=repodir / f"tpl-{template_id}",
         )
         # Copy license
-        shutil.copy(license_path, repodir / "LICENSE")
+        shutil.copy(license_path, repodir / f"tpl-{template_id}" / "LICENSE")
+        # (Over)write template_description.json
+        (repodir / f"tpl-{template_id}" / "template_description.json").write_text(
+            json.dumps(metadata)
+        )
+        # Init/update CHANGELOG
+        changelog = repodir / f"tpl-{template_id}" / "CHANGES"
+        changes = [f"""
+## {datetime.date.today().ctime()} - TemplateFlow Manager Upload
+Populated contents after NIfTI sanitizing by the TF Manager.
+
+"""]
+        if changelog.exists():
+            changes += [changelog.read_text()]
+        changelog.write_text("\n".join(changes))
 
         # Init OSF sibling
-        rrid_str = f" (RRID: {rrid})" if rrid else ""
+        rrid_str = f" (RRID: {metadata['RRID']})" if metadata.get("RRID") else ""
         dl.create_sibling_osf(
             title=f"TemplateFlow resource: <{template_id}>{rrid_str}",
             name="osf",
@@ -213,12 +278,12 @@ Please provide a short description for this resource.""",
             "git fetch upstream tpl-intake", cwd=str(repodir), capture_output=False,
         )
         run_command(
-            f"git checkout -b pr/{osf_project}/tpl-{template_id} upstream/tpl-intake",
+            f"git checkout -b pr/tpl-{template_id} upstream/tpl-intake",
             cwd=str(repodir),
             capture_output=False,
         )
         (repodir / f"{path.name}.toml").write_text(
-            toml.dumps({"osf": {"project": osf_project},})
+            toml.dumps({"github": {"user": gh_user},})
         )
         run_command(
             f"git add {path.name}.toml", cwd=str(repodir), capture_output=False,
@@ -229,7 +294,7 @@ Please provide a short description for this resource.""",
             capture_output=False,
         )
         run_command(
-            f"git push -u origin pr/{osf_project}/tpl-{template_id}",
+            f"git push -u origin pr/tpl-{template_id}",
             cwd=str(repodir),
             capture_output=False,
             env={"GITHUB_USER": gh_user, "GITHUB_PASSWORD": gh_password},
@@ -242,7 +307,7 @@ ADD: ``tpl-{template_id}``
 ## {metadata.get('Name', '<missing Name>')}
 
 Identifier: {metadata.get('Identifier', '<missing Identifier>')}
-Storage: https://osf.io/{osf_project}/files/
+Datalad: https://github.com/{gh_user}/tpl-{template_id}
 
 ### Authors
 {', '.join(metadata['Authors'])}.
@@ -261,13 +326,12 @@ Storage: https://osf.io/{osf_project}/files/
         )
         run_command(
             "hub pull-request -b templateflow:tpl-intake "
-            f"-h {gh_user}:pr/{osf_project}/tpl-{template_id} "
+            f"-h {gh_user}:pr/tpl-{template_id} "
             f"-F {repodir.parent / 'message.md'}",
             cwd=str(repodir),
             capture_output=False,
             env={"GITHUB_USER": gh_user, "GITHUB_PASSWORD": gh_password},
         )
-
 
 
 @cli.command()
