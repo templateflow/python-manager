@@ -1,9 +1,11 @@
 """CLI."""
-from os import cpu_count, getcwd
+from os import cpu_count, getcwd, chdir
+import json
 from pathlib import Path
 import click
 from tempfile import TemporaryDirectory
 import toml
+from pkg_resources import resource_filename as pkgr_fn
 
 
 def validate_name(ctx, param, value):
@@ -36,7 +38,6 @@ def cli():
 
 @cli.command()
 @click.argument("template_id", callback=validate_name)
-@click.option("--osf-project", envvar="OSF_PROJECT", callback=is_set)
 @click.option("--osf-user", envvar="OSF_USERNAME", callback=is_set)
 @click.password_option(
     "--osf-password",
@@ -56,7 +57,6 @@ def cli():
 @click.option("-j", "--nprocs", type=click.IntRange(min=1), default=cpu_count())
 def add(
     template_id,
-    osf_project,
     osf_user,
     osf_password,
     osf_overwrite,
@@ -67,19 +67,46 @@ def add(
 ):
     """Add a new template."""
     from .io import run_command
-    from .osf import upload as _upload
+    from .utils import copy_template
+    import shutil
+    from datalad import api as dl
 
-    path = Path(path or f"tpl-{template_id}")
+    path = Path(path or f"tpl-{template_id}").absolute()
+    cwd = Path.cwd()
 
     if not path.exists():
         raise click.UsageError(f"<{path}> does not exist.")
 
-    metadata = _upload(
-        template_id, osf_project, osf_user, osf_password, osf_overwrite, path, nprocs,
-    )
+    # Check metadata
+    license_path = path / "LICENSE"
+    if not license_path.exists():
+        license_path = path / "LICENCE"
+    if not license_path.exists():
+        license_path = path / "COPYING"
+
+    if not license_path.exists():
+        license_prompt = click.prompt(
+            text="""\
+A LICENSE file MUST be distributed with the template. The TemplateFlow Manager can \
+set a license (either CC0 or CC-BY) for you.""",
+            type=click.Choice(("CC0", "CC-BY", "Custom (abort)")),
+            default="Custom (abort)",
+        )
+        if license_prompt == "Custom (abort)":
+            raise click.UsageError(
+                "Cannot proceed without a valid license. Please write a LICENSE "
+                "file before uploading."
+            )
+
+        license_path = Path(pkgr_fn("tfmanager", f"data/{license_prompt}.LICENSE"))
+
+    metadata = json.loads((path / "template_description.json").read_text())
+    rrid = metadata.get("RRID")
 
     with TemporaryDirectory() as tmpdir:
         repodir = Path(tmpdir) / "templateflow"
+
+        # Clone root <user>/templateflow project - fork if necessary
         click.echo(f"Preparing Pull-Request (wd={tmpdir}).")
         clone = run_command(
             f"git clone https://github.com/{gh_user}/templateflow.git "
@@ -106,6 +133,60 @@ def add(
                 cwd=str(repodir),
                 capture_output=False,
             )
+
+        chdir(repodir)
+
+        # Create datalad dataset
+        dl.create(
+            path=f"tpl-{template_id}",
+            cfg_proc="text2git",
+            initopts={"initial-branch": "main"},
+            description=metadata["Name"],
+        )
+
+        # Populate template
+        copy_template(
+            path=path,
+            dest=repodir / f"tpl-{template_id}",
+        )
+        # Copy license
+        shutil.copy(license_path, repodir / "LICENSE")
+
+        # Init OSF sibling
+        rrid_str = f" (RRID: {rrid})" if rrid else ""
+        dl.create_sibling_osf(
+            title=f"TemplateFlow resource: <{template_id}>{rrid_str}",
+            name="osf",
+            dataset=f"./tpl-{template_id}",
+            public=True,
+            category="data",
+            description=metadata["Name"],
+            tags=["TemplateFlow dataset", template_id]
+        )
+        # Init GH sibling
+        dl.create_sibling_github(
+            reponame=f"tpl-{template_id}",
+            dataset=str(repodir / f"tpl-{template_id}"),
+            github_login=gh_user,
+            publish_depends="osf-storage",
+            existing="replace",
+        )
+
+        # Save added contents
+        dl.save(
+            dataset=str(repodir / f"tpl-{template_id}"),
+            message="ADD: TemplateFlow Manager initialized contents"
+        )
+
+        # Push to siblings
+        dl.push(
+            dataset=str(repodir / f"tpl-{template_id}"),
+            to="github",
+            jobs=cpu_count(),
+        )
+
+        # Back home
+        chdir(cwd)
 
         run_command(
             "git fetch upstream tpl-intake", cwd=str(repodir), capture_output=False,
@@ -165,6 +246,7 @@ Storage: https://osf.io/{osf_project}/files/
             capture_output=False,
             env={"GITHUB_USER": gh_user, "GITHUB_PASSWORD": gh_password},
         )
+
 
 
 @cli.command()
@@ -249,9 +331,9 @@ https://files.osf.io/v1/resources/{osf_project}/providers/osfstorage/\
 @click.option("--deoblique/--no-deoblique", default=False)
 def sanitize(template_dir, normalize, deoblique):
     """Check orientation and datatypes of NIfTI files in template folder."""
-    from .utils import fix_nii as _fix_nii
+    from .utils import copy_template as _copy_template
 
-    updated = _fix_nii(template_dir, normalize, deoblique)
+    updated = _copy_template(template_dir, normalize, deoblique)
     if updated:
         print(
             "\n  * ".join(

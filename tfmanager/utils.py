@@ -1,5 +1,7 @@
 """Genearal purpose routines."""
+import shutil
 from pathlib import Path
+from contextlib import suppress
 from typing import Union, Generator
 import numpy as np
 import nibabel as nb
@@ -16,13 +18,21 @@ def glob_all(path: Union[Path, str]) -> Generator[Path, None, None]:
             yield p
 
 
-def fix_nii(path=None, normalize=False, deoblique=True):
+def copy_template(path=None, normalize=False, deoblique=True, dest=None):
     """Revise orientation and dtype of NIfTI files in path."""
     path = Path(path or ".")
+    dest = dest or path
 
     retval = []
+
     for filename in glob_all(path):
+        relname = filename.relative_to(path)
+        destname = dest / relname
+        destname.parent.mkdir(parents=True, exist_ok=True)
         if not filename.name.endswith((".nii", ".nii.gz")):
+            with suppress(shutil.SameFileError):
+                shutil.copy(filename, destname)
+            print(f"Copied: {relname} -> {destname}")
             continue
 
         stem = filename.name[: -len("".join(filename.suffixes))]
@@ -50,7 +60,7 @@ def fix_nii(path=None, normalize=False, deoblique=True):
 
         if normalize and modality in ("T1w", "T2w", "PD"):
             modified = True
-            data = 1e4 * data / np.percentile(data, 99.9)
+            data = np.round(1e4 * data / np.percentile(data, 99.9)).astype(dtype)
 
         affine = im.affine.copy()
         hdr.set_data_dtype(dtype)
@@ -77,6 +87,11 @@ def fix_nii(path=None, normalize=False, deoblique=True):
             nii.header.set_qform(affine, 4)
             nii.header.set_slope_inter(slope=1.0, inter=0.0)
             nii.header.set_xyzt_units(xyz="mm")
-            nii.to_filename(filename)
+            nii.to_filename(destname)
+            print(f"Fixed NIfTI headers: {relname} -> {destname}")
             retval.append(filename)
+        else:
+            shutil.copy(filename, destname)
+            print(f"Copied: {relname} -> {destname}")
+
     return retval
