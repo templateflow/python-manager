@@ -232,7 +232,7 @@ Please provide a list of links and publications within double-quotes \
         shutil.copy(license_path, repodir / f"tpl-{template_id}" / "LICENSE")
         # (Over)write template_description.json
         (repodir / f"tpl-{template_id}" / "template_description.json").write_text(
-            json.dumps(metadata)
+            json.dumps(metadata, indent=2)
         )
         # Init/update CHANGELOG
         changelog = repodir / f"tpl-{template_id}" / "CHANGES"
