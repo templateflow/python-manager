@@ -18,7 +18,9 @@ def glob_all(path: Union[Path, str]) -> Generator[Path, None, None]:
             yield p
 
 
-def copy_template(path=None, normalize=False, deoblique=True, dest=None):
+def copy_template(
+    path=None, normalize=False, deoblique=True, force_dtype=True, dest=None
+):
     """Revise orientation and dtype of NIfTI files in path."""
     path = Path(path or ".")
     dest = dest or path
@@ -40,23 +42,25 @@ def copy_template(path=None, normalize=False, deoblique=True, dest=None):
 
         im = nb.as_closest_canonical(nb.load(filename))
         hdr = im.header.copy()
-        data = np.asanyarray(im.dataobj)
+        data_dtype = im.get_data_dtype()
+        data = np.asanyarray(im.dataobj, dtype=data_dtype)
 
         dtype = "int16"
         if modality in ("mask",):
             dtype = "uint8"
+        elif modality in ("dseg",) and np.all(0 <= data) and np.all(data < 256):
+            dtype = "uint8"
+        elif not force_dtype:
+            dtype = data_dtype
 
-        if modality in ("dseg",):
-            if np.all(0 <= data) and np.all(data < 256):
-                dtype = "uint8"
+        modified = np.dtype(dtype) != np.dtype(data_dtype)
 
         if modality in ("probseg",):
+            modified = True
             dtype = "float32"
             data = im.get_fdata(dtype="float32")
             data -= data.min()
             data *= 1.0 / data.max()
-
-        modified = np.dtype(dtype) == np.dtype(im.get_data_dtype())
 
         if normalize and modality in ("T1w", "T2w", "PD"):
             modified = True
@@ -77,11 +81,14 @@ def copy_template(path=None, normalize=False, deoblique=True, dest=None):
         sform, scode = im.header.get_sform(coded=True)
         qform, qcode = im.header.get_qform(coded=True)
 
-        modified = modified or all(code == 4 for code in (scode, qcode))
-        modified = modified or sform is None or np.allclose(sform, affine)
-        modified = modified or qform is None or np.allclose(qform, affine)
-
-        if modified:
+        if (
+            modified
+            or not all(code == 4 for code in (scode, qcode))
+            or sform is None
+            or not np.allclose(sform, affine)
+            or qform is None
+            or not np.allclose(qform, affine)
+        ):
             nii = nb.Nifti1Image(data.astype(dtype), affine, hdr)
             nii.header.set_sform(affine, 4)
             nii.header.set_qform(affine, 4)
@@ -90,8 +97,10 @@ def copy_template(path=None, normalize=False, deoblique=True, dest=None):
             nii.to_filename(destname)
             print(f"Fixed NIfTI headers: {relname} -> {destname}")
             retval.append(filename)
-        else:
+        elif filename != destname:
             shutil.copy(filename, destname)
             print(f"Copied: {relname} -> {destname}")
+        else:
+            print(f"File {filename} not modified.")
 
     return retval

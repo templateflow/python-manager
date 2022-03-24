@@ -421,12 +421,13 @@ https://files.osf.io/v1/resources/{osf_project}/providers/osfstorage/\
 @cli.command()
 @click.argument("template_dir", type=click.Path(exists=True), default=getcwd())
 @click.option("--normalize/--no-normalize", default=True)
+@click.option("--force-dtype/--no-force-dtype", default=True)
 @click.option("--deoblique/--no-deoblique", default=False)
-def sanitize(template_dir, normalize, deoblique):
+def sanitize(template_dir, normalize, force_dtype, deoblique):
     """Check orientation and datatypes of NIfTI files in template folder."""
     from .utils import copy_template as _copy_template
 
-    updated = _copy_template(template_dir, normalize, deoblique)
+    updated = _copy_template(template_dir, normalize, force_dtype, deoblique)
     if updated:
         print(
             "\n  * ".join(
