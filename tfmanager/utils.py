@@ -62,9 +62,8 @@ def copy_template(
             data -= data.min()
             data *= 1.0 / data.max()
 
-        if normalize and modality in ("T1w", "T2w", "PD"):
-            modified = True
-            data = np.round(1e4 * data / np.percentile(data, 99.9)).astype(dtype)
+        elif modified and normalize and modality in ("T1w", "T2w", "PD"):
+            data = np.round(1e4 * im.get_fdata() / np.percentile(data, 99.9)).astype(dtype)
 
         affine = im.affine.copy()
         hdr.set_data_dtype(dtype)
