@@ -19,7 +19,12 @@ def glob_all(path: Union[Path, str]) -> Generator[Path, None, None]:
 
 
 def copy_template(
-    path=None, normalize=False, deoblique=True, force_dtype=True, dest=None
+    path=None,
+    normalize=False,
+    deoblique=True,
+    force_dtype=True,
+    norm_max=1e4,
+    dest=None,
 ):
     """Revise orientation and dtype of NIfTI files in path."""
     path = Path(path or ".")
@@ -50,7 +55,7 @@ def copy_template(
             dtype = "uint8"
         elif modality in ("dseg",) and np.all(0 <= data) and np.all(data < 256):
             dtype = "uint8"
-        elif not force_dtype:
+        elif not force_dtype or modality not in ("T1w", "T2w", "PD", "PDw"):
             dtype = data_dtype
 
         modified = np.dtype(dtype) != np.dtype(data_dtype)
@@ -62,8 +67,12 @@ def copy_template(
             data -= data.min()
             data *= 1.0 / data.max()
 
-        elif modified and normalize and modality in ("T1w", "T2w", "PD"):
-            data = np.round(1e4 * im.get_fdata() / np.percentile(data, 99.9)).astype(dtype)
+        elif normalize and modality in ("T1w", "T2w", "PD", "PDw"):
+            fdata = im.get_fdata()
+            fdata -= fdata.min()
+            data = np.round(norm_max * fdata / np.percentile(fdata, 99.9)).astype(dtype)
+            hdr["cal_min"] = 0
+            hdr["cal_max"] = norm_max
 
         affine = im.affine.copy()
         hdr.set_data_dtype(dtype)
