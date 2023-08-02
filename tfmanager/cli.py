@@ -1,4 +1,5 @@
 """CLI."""
+import os
 from os import cpu_count, getcwd, chdir, getenv
 import datetime
 import json
@@ -75,9 +76,10 @@ def add(
     import shutil
     from datalad import api as dl
 
-    gh_password = getenv("GITHUB_PASSWORD")
     if not gh_user or not gh_token:
         raise click.BadParameter("Insufficient secrets to login into GitHub")
+
+    os.environ["DATALAD_CREDENTIAL_GITHUB_TOKEN"] = gh_token
 
     path = Path(path or f"tpl-{template_id}").absolute()
     cwd = Path.cwd()
@@ -198,13 +200,13 @@ Please provide a list of links and publications within double-quotes \
                 "hub clone templateflow/templateflow",
                 cwd=tmpdir,
                 capture_output=False,
-                env={"GITHUB_USER": gh_user, "GITHUB_PASSWORD": gh_password},
+                env={"GITHUB_TOKEN": gh_token},
             )
             run_command(
                 "hub fork --remote-name origin",
                 cwd=str(repodir),
                 capture_output=False,
-                env={"GITHUB_USER": gh_user, "GITHUB_PASSWORD": gh_password},
+                env={"GITHUB_TOKEN": gh_token},
             )
         else:
             run_command(
@@ -222,6 +224,12 @@ Please provide a list of links and publications within double-quotes \
             initopts={"initial-branch": "main"},
             description=metadata["Name"],
         )
+        gitattr = (repodir / f"tpl-{template_id}" / ".gitattributes").read_text().strip()
+        (repodir / f"tpl-{template_id}" / ".gitattributes").write_text("\n".join([
+            gitattr,
+            "*.gii annex.largefiles=anything",
+            "",
+        ]))
 
         # Populate template
         copy_template(
@@ -260,7 +268,6 @@ Populated contents after NIfTI sanitizing by the TF Manager.
         dl.create_sibling_github(
             reponame=f"tpl-{template_id}",
             dataset=str(repodir / f"tpl-{template_id}"),
-            github_login=gh_user,
             publish_depends="osf-storage",
             existing="replace",
             access_protocol="ssh"
@@ -338,8 +345,10 @@ Datalad: https://github.com/{gh_user}/tpl-{template_id}
             f"-F {repodir.parent / 'message.md'}",
             cwd=str(repodir),
             capture_output=False,
-            env={"GITHUB_USER": gh_user, "GITHUB_TOKEN": gh_token},
+            env={"GITHUB_TOKEN": gh_token},
         )
+
+    del os.environ["DATALAD_CREDENTIAL_GITHUB_TOKEN"]
 
 
 @cli.command()
